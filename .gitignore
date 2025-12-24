@@ -1,0 +1,24 @@
+# Ignore Python virtual environments
+env/
+venv/
+.venv/
+ENV/
+
+# Ignore environment files
+.env
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter
+.ipynb_checkpoints
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# OS files
+.DS_Store
