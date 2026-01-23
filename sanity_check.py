@@ -68,6 +68,7 @@ def run_sanity_check():
     print("\n4. Analizando el estado final...")
     final_density = column.get_sparse_density()
     print(f"   - Densidad de actividad (Sparsity) del estado final: {final_density:.2f}")
+    print(f"   - Tiempo total de simulación biológica: {simulator.simulation_time_ms} ms")
 
     print("\n--- [SANITY CHECK COMPLETADO] ---")
 

@@ -4,6 +4,8 @@ import numpy as np
 import numba
 from cbnetwork.localnetwork import LocalNetwork
 
+TIME_STEP_MS = 10  # Cada paso de simulación representa 10ms
+
 @numba.njit
 def _find_external_pos(external_map: np.ndarray, var_index: int) -> int:
     for i in range(len(external_map)):
@@ -56,6 +58,7 @@ class Simulator:
         self.variables_map = {
             var.index: var for var in self.network.descriptive_function_variables
         }
+        self.simulation_time_ms = 0 # Seguimiento del tiempo de simulación
 
         self.is_dynamic = any(callable(var.cnf_function) for var in self.variables_map.values())
 
@@ -111,5 +114,6 @@ class Simulator:
                 current_state = _accelerated_next_state(current_state, self.static_rules, external_arr, external_map)
 
             history[i + 1] = current_state
+            self.simulation_time_ms += TIME_STEP_MS # Incrementar el tiempo de simulación
 
-        return history, None # El simulador ya no reporta información de atractores
+        return history, None
