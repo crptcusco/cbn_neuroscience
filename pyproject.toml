@@ -17,9 +17,8 @@ classifiers = [
 ]
 dependencies = [
     "numpy",
-    "numba",
-    "dask",
-    "cbnetwork @ git+https://github.com/crptcusco/cbnetwork.git@3a83acd#egg=cbnetwork",
+    "matplotlib",
+    "scipy",
 ]
 
 [tool.setuptools.packages.find]
