@@ -1,0 +1,28 @@
+% Propuesta de texto para la sección de Metodología en LaTeX
+
+\subsection{Modelo Neuronal: Spike-Response Model (Integrated Form)}
+
+Para el núcleo de la simulación neuronal, se abandona el enfoque de integración numérica de ecuaciones diferenciales en favor del \textit{Spike-Response Model} (SRM), una formulación integral descrita por Trappenberg (Capítulo 5.1.3). Este modelo ofrece una representación más elegante y computacionalmente eficiente de la dinámica neuronal.
+
+El potencial de membrana $v_i(t)$ de una neurona $i$ ya no se calcula paso a paso, sino que se define directamente por la superposición lineal de los efectos de los spikes de entrada y los disparos propios pasados. La Ecuación 5.13 formaliza este concepto:
+
+\begin{equation}
+    v_i(t) = \sum_{j \in \Gamma_i} w_{ij} \sum_{t_j^{(f)}} \epsilon(t - t_j^{(f)}) + \sum_{t_i^{(f)}} \eta(t - t_i^{(f)}) + v_{\text{rest}}
+    \label{eq:srm_voltage}
+\end{equation}
+
+donde:
+\begin{itemize}
+    \item $\epsilon(t - t_j^{(f)})$ es el kernel de respuesta sináptica, que describe el potencial post-sináptico excitatorio o inhibitorio (EPSP/IPSP) causado por un spike de la neurona presináptica $j$ en el tiempo $t_j^{(f)}$.
+    \item $\eta(t - t_i^{(f)})$ es el kernel de reseteo, que modela la hiperpolarización y el periodo refractario después de un spike propio en el tiempo $t_i^{(f)}$.
+    \item $w_{ij}$ es el peso sináptico de la conexión desde la neurona $j$ a la $i$.
+\end{itemize}
+
+Este enfoque maneja la memoria del sistema de manera explícita a través de la forma de los kernels, que decaen exponencialmente. El reseteo post-disparo, un desafío numérico en los modelos de ecuaciones diferenciales, se maneja sin discontinuidades. En nuestra implementación, el kernel $\eta$ se define, siguiendo la Ecuación 5.16, como:
+
+\begin{equation}
+    \eta(s) = -\theta e^{-s / \tau_m}
+    \label{eq:eta_kernel}
+\end{equation}
+
+donde $s = t - t_i^{(f)}$ es el tiempo transcurrido desde el último disparo. Esta función asegura que el potencial de membrana sea "tirado" hacia abajo después de un spike, previniendo disparos inmediatos y modelando de forma efectiva la refractariedad. La condición de disparo ocurre cuando el potencial $v_i(t)$ alcanza el umbral $\theta$.
