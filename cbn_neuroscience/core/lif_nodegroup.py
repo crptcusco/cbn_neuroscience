@@ -27,13 +27,16 @@ class LIF_NodeGroup(NeuronModel):
         self.I_syn_nmda = np.zeros(n_nodes)
         self.syn_decay_exc = np.exp(-dt / tau_syn_exc)
 
-    def update(self, weighted_spikes, nmda_spikes, I_noise):
+    def update(self, **inputs):
         """
-        Args:
+        Args (via dict):
             weighted_spikes (np.ndarray): Spikes de entrada AMPA (rápidos).
             nmda_spikes (np.ndarray): Spikes de entrada NMDA (dependientes de voltaje).
             I_noise (np.ndarray): Ruido de corriente.
         """
+        weighted_spikes = np.full(self.n_nodes, inputs.get('weighted_spikes', 0))
+        nmda_spikes = np.full(self.n_nodes, inputs.get('nmda_spikes', 0))
+        I_noise = np.full(self.n_nodes, inputs.get('I_noise', 0))
         # 1. Actualizar corrientes sinápticas
         self.I_syn_exc *= self.syn_decay_exc
         self.I_syn_exc += weighted_spikes

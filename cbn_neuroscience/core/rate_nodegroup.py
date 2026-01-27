@@ -39,7 +39,8 @@ class RateNodeGroup(NeuronModel):
             return self._step_gain_function(x)
         return x # Ganancia lineal por defecto
 
-    def update(self, I_total):
+    def update(self, **inputs):
+        I_total = inputs.get('I_total', 0)
         target_A = self.get_gain(I_total)
         dA = (-self.A + target_A) / self.tau_A
         self.A += dA * self.dt
