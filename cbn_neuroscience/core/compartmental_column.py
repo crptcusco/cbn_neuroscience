@@ -16,21 +16,31 @@ class CompartmentalColumn:
                        for name, n_nodes in n_nodes_per_layer.items()}
 
         self.is_spike_based = hasattr(next(iter(self.layers.values())), 'spikes')
+        if self.is_spike_based:
+            self.prev_spikes = {name: np.zeros(layer.n_nodes, dtype=bool) for name, layer in self.layers.items()}
 
-    def update(self, layer_inputs: dict):
+    def update(self, step_time, layer_inputs: dict):
         """
         Args:
-            layer_inputs (dict): Un diccionario donde cada clave es un nombre de capa
-                                 y el valor es un dict de inputs para esa capa.
-                                 Ej: {'L4': {'weighted_spikes': 0.5, 'I_noise': ...}}
+            step_time (float): Tiempo actual de la simulación.
+            layer_inputs (dict): Inputs pre-calculados para cada capa.
         """
+        # Primero, guardar los spikes actuales para el cálculo del siguiente paso
+        if self.is_spike_based:
+            for name, layer in self.layers.items():
+                self.prev_spikes[name] = layer.spikes.copy()
+
+        # Luego, actualizar cada capa con sus inputs
         for name, layer in self.layers.items():
             inputs_for_layer = layer_inputs.get(name, {})
-            layer.update(**inputs_for_layer)
+            if self.is_spike_based:
+                layer.update(step_time, **inputs_for_layer)
+            else:
+                layer.update(**inputs_for_layer)
 
     def get_state(self):
         """Devuelve el estado relevante (spikes o actividad) de cada capa."""
         if self.is_spike_based:
-            return {name: layer.spikes.copy() for name, layer in self.layers.items()}
+            return {name: layer.spikes for name, layer in self.layers.items()}
         else: # Rate-based
             return {name: layer.A for name, layer in self.layers.items()}

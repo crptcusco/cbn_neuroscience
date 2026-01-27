@@ -46,26 +46,29 @@ SPK_WEIGHT_LOW = 0.5
 SPK_WEIGHT_HIGH = 1.0
 
 
+from cbn_neuroscience.core.lif_nodegroup import LIF_NodeGroup
+from cbn_neuroscience.core.network_simulator import NetworkSimulator
+
 # --- 3. Bucle de Calibración de Ruido y Análisis de Tiempo de Subida ---
 print("Iniciando análisis de respuesta al escalón...")
 optimal_noise_sigma = None
+
+rules = [{'sources': [(0, 'L4')], 'target_col': 0, 'target_layer': 'L5/6', 'weight': 1.5}]
 
 for noise_sigma in np.arange(0.5, 5.0, 0.5):
     print(f"\nProbando con NOISE_SIGMA = {noise_sigma:.2f}...")
 
     # --- Simulación ---
-    column = CompartmentalColumn(index=0, n_nodes_per_layer=LAYER_SIZES, g_axial=4.0, lif_params=LIF_PARAMS)
+    columns = [CompartmentalColumn(index=0, n_nodes_per_layer=LAYER_SIZES, model_class=LIF_NodeGroup, model_params=LIF_PARAMS)]
+    simulator = NetworkSimulator(columns, rules)
     l56_spike_history = np.zeros((N_STEPS, LAYER_SIZES['L5/6']), dtype=bool)
 
     for step in range(N_STEPS):
         stim_weight = SPK_WEIGHT_LOW if step < STEP_TIME_STEP else SPK_WEIGHT_HIGH
-        ext_spikes = np.full(LAYER_SIZES['L4'], stim_weight)
+        ext_inputs = {0: {'L4': {'exc_spikes': stim_weight, 'I_noise': np.random.normal(0, noise_sigma, LAYER_SIZES['L4'])}}}
 
-        noise = np.random.normal(0, noise_sigma, sum(LAYER_SIZES.values()))
-        inter_spikes = np.zeros(LAYER_SIZES['L2/3'])
-
-        column.update(ext_spikes, noise, inter_spikes)
-        l56_spike_history[step, :] = column.layers['L5/6'].spikes
+        simulator.run_step(step, ext_inputs)
+        l56_spike_history[step, :] = columns[0].layers['L5/6'].spikes
 
     # --- Cálculo de A(t) y Tiempo de Subida ---
     time_axis = np.arange(N_STEPS) * DT
@@ -113,15 +116,14 @@ def rate_model_step_response(t, t_step, I_low, I_high, tau):
 # Re-ejecutar la simulación con el ruido óptimo para obtener los datos para la gráfica
 if optimal_noise_sigma is not None:
     print("\nGenerando gráfica comparativa...")
-    column = CompartmentalColumn(index=0, n_nodes_per_layer=LAYER_SIZES, g_axial=4.0, lif_params=LIF_PARAMS)
+    columns = [CompartmentalColumn(index=0, n_nodes_per_layer=LAYER_SIZES, model_class=LIF_NodeGroup, model_params=LIF_PARAMS)]
+    simulator = NetworkSimulator(columns, rules)
     l56_spike_history_final = np.zeros((N_STEPS, LAYER_SIZES['L5/6']), dtype=bool)
     for step in range(N_STEPS):
         stim_weight = SPK_WEIGHT_LOW if step < STEP_TIME_STEP else SPK_WEIGHT_HIGH
-        ext_spikes = np.full(LAYER_SIZES['L4'], stim_weight)
-        noise = np.random.normal(0, optimal_noise_sigma, sum(LAYER_SIZES.values()))
-        inter_spikes = np.zeros(LAYER_SIZES['L2/3'])
-        column.update(ext_spikes, noise, inter_spikes)
-        l56_spike_history_final[step, :] = column.layers['L5/6'].spikes
+        ext_inputs = {0: {'L4': {'exc_spikes': stim_weight, 'I_noise': np.random.normal(0, optimal_noise_sigma, LAYER_SIZES['L4'])}}}
+        simulator.run_step(step, ext_inputs)
+        l56_spike_history_final[step, :] = columns[0].layers['L5/6'].spikes
 
     # Calcular la actividad empírica
     time_axis = np.arange(N_STEPS) * DT

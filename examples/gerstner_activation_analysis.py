@@ -45,32 +45,17 @@ def simulate_population(current, lif_params, sim_time_ms=1000):
     n_steps = int(sim_time_ms / dt)
     n_neurons = 50 # Simular una población
 
+    # Utilizar la implementación de la librería
     lif_pop = LIF_NodeGroup(n_nodes=n_neurons, **lif_params)
 
     total_spikes = 0
 
-    # Usar un estímulo basado en corriente, no en conductancia
-    # por lo que no usamos `weighted_spikes` sino que construimos I_syn
-    # Aquí es más fácil modificar temporalmente LIF_NodeGroup para aceptar I_syn
-    # O, más limpio, simularlo aquí.
+    # La corriente se puede pasar como I_noise
+    inputs = {'I_noise': np.full(n_neurons, current)}
 
-    v = np.full(n_neurons, lif_params['v_rest'])
-    ref_timer = np.zeros(n_neurons, dtype=int)
-    delta_steps = int(lif_params['delta'] / dt)
-
-    for _ in range(n_steps):
-        in_ref = ref_timer > 0
-
-        dv = (-(v[~in_ref] - lif_params['v_rest']) + lif_params['R_m'] * current) / lif_params['tau_m']
-        v[~in_ref] += dv * dt
-
-        ref_timer[in_ref] -= 1
-
-        spikes = v >= lif_params['theta']
-        if np.any(spikes):
-            v[spikes] = lif_params['v_reset']
-            ref_timer[spikes] = delta_steps
-            total_spikes += np.sum(spikes)
+    for step in range(n_steps):
+        lif_pop.update(step * dt, **inputs)
+        total_spikes += np.sum(lif_pop.spikes)
 
     # Tasa de disparo promedio en Hz
     avg_rate = total_spikes / (n_neurons * sim_time_ms / 1000.0)

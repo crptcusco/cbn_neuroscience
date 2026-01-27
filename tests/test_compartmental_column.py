@@ -24,12 +24,12 @@ def test_lif_propagation_with_simulator():
     simulator = NetworkSimulator(columns, coupling_rules=rules)
 
     output_has_spiked = False
-    for _ in range(500):
-        ext_inputs = {0: {'L4': {'weighted_spikes': 2.0}}} # Estímulo constante
-        simulator.run_step(ext_inputs)
+    for i in range(500):
+        ext_inputs = {0: {'L4': {'exc_spikes': 2.0}}} # Estímulo constante
+        simulator.run_step(i, ext_inputs)
 
         # Comprobar si la capa de salida ha disparado
-        if np.any(simulator.network_state['col_0']['L5']):
+        if np.any(columns[0].layers['L5'].spikes):
             output_has_spiked = True
             break
 

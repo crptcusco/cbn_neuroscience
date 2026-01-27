@@ -7,10 +7,11 @@ from cbn_neuroscience.core.rate_nodegroup import RateNodeGroup
 # --- 1. Parámetros ---
 RATE_PARAMS = {
     'tau_A': 100.0,
+    'dt': 0.1,
+    'gain_function_type': 'gerstner',
     't_ref': 1.0,
     'gerstner_tau': 5.0,
-    'I_th': 1.5,
-    'dt': 0.1
+    'I_th': 1.5
 }
 
 SIM_TIME_MS = 500  # Tiempo suficiente para alcanzar estado estacionario
@@ -28,7 +29,7 @@ for current in input_currents:
 
     # Simular hasta estado estacionario
     for _ in range(N_STEPS):
-        rate_pop.update(np.array([current]))
+        rate_pop.update(I_total=current)
 
     # La actividad final es la tasa de estado estacionario
     output_rates.append(rate_pop.A[0])
@@ -44,7 +45,7 @@ plt.plot(input_currents, output_rates, 'b-', linewidth=3, label='Simulación del
 # Curva teórica (directamente de la función de Gerstner)
 # Necesitamos la función de ganancia para plotearla
 theoretical_pop = RateNodeGroup(n_nodes=1, **RATE_PARAMS)
-theoretical_rates = theoretical_pop._gerstner_gain_function(input_currents)
+theoretical_rates = theoretical_pop.get_gain(input_currents)
 plt.plot(input_currents, theoretical_rates, 'r--', label='Función Analítica de Gerstner (Eq. 5.55)')
 
 plt.title('Validación del Modelo de Tasa vs. Datos del Hipocampo (Fig. 5.16B)')

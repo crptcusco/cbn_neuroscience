@@ -38,7 +38,7 @@ spike_history = np.zeros(N_STEPS, dtype=bool)
 
 for i in range(N_STEPS):
     weighted_input = W_IN * input_spikes[i]
-    srm_group.update(np.array([weighted_input]))
+    srm_group.update(weighted_input_spikes=np.array([weighted_input]), noise_term=np.array([0.0]))
 
     v_history[i] = srm_group.v[0]
     h_syn_history[i] = srm_group.h_syn[0]

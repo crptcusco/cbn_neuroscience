@@ -6,6 +6,8 @@ from cbn_neuroscience.core.rate_nodegroup import RateNodeGroup
 from cbn_neuroscience.core.compartmental_column import CompartmentalColumn
 from cbn_neuroscience.core.network_simulator import NetworkSimulator
 
+from cbn_neuroscience.core.plasticity_manager import PlasticityManager
+
 # --- 1. Definición de la Red y Reglas ---
 rate_params = {'tau_A': 20.0, 'gain_function_type': 'sigmoid', 'beta': 1.0, 'x0': 5.0}
 n_nodes_per_layer = {'L4': 1, 'L5': 1}
@@ -16,45 +18,39 @@ rules = [{'sources': [(0, 'L4')], 'target_col': 0, 'target_layer': 'L5', 'type':
 columns = [CompartmentalColumn(index=0, n_nodes_per_layer=n_nodes_per_layer,
                              model_class=RateNodeGroup, model_params=rate_params)]
 
-simulator = NetworkSimulator(columns, coupling_rules=rules)
+# --- 2. Configuración del PlasticityManager ---
+# Usaremos la regla de covarianza para simular una potenciación simple.
+# Si la actividad pre y post está por encima de la media, el peso crecerá.
+cov_params = {'learning_rate': 0.05, 'w_max': 1.0, 'w_min': 0.0}
+plasticity = PlasticityManager(rule_type='covariance', **cov_params)
 
-# --- 2. Definición de la Regla de Plasticidad "Dummy" ---
-def simple_potentiation_rule(current_weight, pre_activities, post_activity):
-    """Una regla simple que incrementa el peso si hay actividad."""
-    # pre_activities es una lista, tomamos el primero
-    pre_activity = pre_activities[0]
-    if pre_activity > 0.1 and post_activity > 0.1:
-        return current_weight + 0.01 # Potenciación a largo plazo (LTP) simple
-    return current_weight # Sin cambios
+# El NetworkSimulator ahora maneja la plasticidad internamente
+simulator = NetworkSimulator(columns, rules, plasticity_manager=plasticity)
 
 # --- 3. Simulación ---
 DT = 0.1
-SIM_TIME_MS = 200
+SIM_TIME_MS = 2000 # Simulación más larga para ver el cambio
 N_STEPS = int(SIM_TIME_MS / DT)
+weight_history = np.zeros(N_STEPS)
 
 print("Ejecutando demostración del framework de plasticidad...")
 for step in range(N_STEPS):
     # Aplicar un estímulo constante para inducir actividad
-    ext_inputs = {0: {'L4': {'I_total': 10.0}}}
+    ext_inputs = {0: {'L4': {'I_noise': 10.0}}}
 
-    simulator.run_step(ext_inputs)
-    simulator.apply_plasticity(simple_potentiation_rule)
-    simulator.record_weights() # Guardar los pesos en cada paso
+    simulator.run_step(step, ext_inputs)
+
+    # Registrar el peso actual
+    current_weight = simulator.connection_manager.get_weight(0, 'L4', 0, 'L5')
+    weight_history[step] = current_weight
 
 print("Simulación completada.")
 
 # --- 4. Visualización de la Evolución del Peso ---
-history = np.array(simulator.connection_manager.weight_history)
-
-# Extraer el peso de la conexión de L4 a L5
-source_idx = simulator.connection_manager.layer_map[(0, 'L4')]
-target_idx = simulator.connection_manager.layer_map[(0, 'L5')]
-weight_evolution = history[:, target_idx, source_idx]
-
-time_axis = np.arange(len(weight_evolution)) * DT
+time_axis = np.arange(N_STEPS) * DT
 
 plt.figure(figsize=(10, 6))
-plt.plot(time_axis, weight_evolution, label='Peso de la sinapsis L4 -> L5')
+plt.plot(time_axis, weight_history, label='Peso de la sinapsis L4 -> L5')
 plt.title('Evolución de un Peso Sináptico con una Regla de Plasticidad')
 plt.xlabel('Tiempo (ms)')
 plt.ylabel('Peso Sináptico (w)')

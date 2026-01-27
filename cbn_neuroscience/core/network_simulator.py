@@ -2,100 +2,187 @@
 
 import numpy as np
 from cbn_neuroscience.core.connections import ConnectionManager
+from cbn_neuroscience.core.plasticity_manager import PlasticityManager
 
 class NetworkSimulator:
-    """
-    Orquesta la simulación, usando un ConnectionManager para calcular las interacciones.
-    """
-    def __init__(self, columns, coupling_rules):
+    def __init__(self, columns, coupling_rules, plasticity_manager: PlasticityManager = None):
         self.columns = columns
         self.connection_manager = ConnectionManager(columns, coupling_rules)
-        self.network_state = {f'col_{i}': col.get_state() for i, col in enumerate(self.columns)}
+        self.dt = columns[0].layers[list(columns[0].layers.keys())[0]].dt if columns else 0.1
+        self.plasticity_manager = plasticity_manager
 
-    def run_step(self, ext_inputs: dict):
-        """
-        Calcula todos los inputs y actualiza cada columna.
-        """
-        # --- 1. Calcular inputs de acoplamiento para todas las capas ---
-        all_coupling_inputs = {i: {name: {} for name in col.layers.keys()} for i, col in enumerate(self.columns)}
+        # Inicialización para la regla de covarianza
+        if self.plasticity_manager and self.plasticity_manager.rule_type == 'covariance':
+            self.avg_rates = {} # (col_idx, layer_name) -> avg_rate
+            self.tau_avg_rate = 100.0 # ms, constante de tiempo para el promedio móvil
 
-        for rule in self.connection_manager.coupling_rules:
-            target_col_idx = rule['target_col']
-            target_layer = rule['target_layer']
+    def run_step(self, step_idx, ext_inputs: dict):
+        step_time = step_idx * self.dt
 
-            source_values = [self.network_state[f'col_{c}'][l] for c, l in rule['sources']]
-            is_spike_based = isinstance(source_values[0], np.ndarray) and source_values[0].dtype == bool
+        # Obtener el estado de spikes del paso anterior
+        prev_spikes_state = {f'col_{i}': col.get_state() for i, col in enumerate(self.columns)}
 
-            # Para modelos de spikes, la actividad es la tasa de disparo media
-            if is_spike_based:
-                source_values = [np.mean(s) for s in source_values]
-
-            # Obtener peso dinámico
-            weight = self.connection_manager.get_weight(rule['sources'][0][0], rule['sources'][0][1], target_col_idx, target_layer)
-
-            # Calcular valor de la interacción
-            value = np.prod(source_values) if rule['type'] == 'multiplicative' else np.sum(source_values)
-
-            # Determinar el tipo de input y acumular
-            input_type = rule.get('synapse_type', 'I_total' if not is_spike_based else 'weighted_spikes')
-
-            current_inputs = all_coupling_inputs[target_col_idx][target_layer]
-            current_inputs.setdefault(input_type, 0)
-            current_inputs[input_type] += weight * value
-
-        # --- 2. Actualizar cada columna ---
+        # Calcular inputs para cada columna
         for i, col in enumerate(self.columns):
-            # Combinar inputs externos y de acoplamiento
-            final_inputs = {name: {} for name in col.layers.keys()}
+            layer_inputs = {name: {'exc_spikes': np.zeros(layer.n_nodes), 'inh_spikes': np.zeros(layer.n_nodes), 'I_noise': np.zeros(layer.n_nodes)}
+                            for name, layer in col.layers.items()}
+
+            # Procesar reglas
+            for rule in self.connection_manager.coupling_rules:
+                if rule['target_col'] != i: continue
+
+                target_layer_name = rule['target_layer']
+                rule_type = rule.get('type', 'additive')
+
+                if rule_type == 'additive':
+                    for source_col, source_layer in rule['sources']:
+                        source_activity = np.mean(prev_spikes_state[f'col_{source_col}'][source_layer])
+                        if source_activity == 0: continue
+
+                        weight = self.connection_manager.get_weight(source_col, source_layer, i, target_layer_name)
+
+                        if col.is_spike_based:
+                            if weight >= 0:
+                                layer_inputs[target_layer_name]['exc_spikes'] += weight * source_activity
+                            else:
+                                layer_inputs[target_layer_name]['inh_spikes'] += -weight * source_activity
+                        else: # Rate-based
+                            layer_inputs[target_layer_name].setdefault('I_total', 0)
+                            layer_inputs[target_layer_name]['I_total'] += weight * source_activity
+
+                elif rule_type == 'multiplicative':
+                    product_of_sources = 1.0
+                    for source_col, source_layer in rule['sources']:
+                        product_of_sources *= np.mean(prev_spikes_state[f'col_{source_col}'][source_layer])
+
+                    if product_of_sources == 0: continue
+
+                    # Para la lógica multiplicativa, asumimos que el peso es el mismo desde todas las fuentes
+                    source_col, source_layer = rule['sources'][0]
+                    weight = self.connection_manager.get_weight(source_col, source_layer, i, target_layer_name)
+
+                    if not col.is_spike_based:
+                        layer_inputs[target_layer_name].setdefault('I_total', 0)
+                        layer_inputs[target_layer_name]['I_total'] += weight * product_of_sources
+
+            # Añadir inputs externos y actualizar la columna
             col_ext_inputs = ext_inputs.get(i, {})
-            col_coupling_inputs = all_coupling_inputs[i]
+            for layer_name, inputs in col_ext_inputs.items():
+                if col.is_spike_based:
+                    for input_type, val in inputs.items():
+                        layer_inputs[layer_name][input_type] += val
+                else: # Rate-based, sumar todo a I_total
+                    layer_inputs[layer_name].setdefault('I_total', 0)
+                    layer_inputs[layer_name]['I_total'] += inputs.get('I_noise', 0) # El test usa I_noise
 
-            for layer_name in final_inputs.keys():
-                final_inputs[layer_name] = col_coupling_inputs.get(layer_name, {})
-                # Sumar inputs externos
-                for in_type, in_val in col_ext_inputs.get(layer_name, {}).items():
-                    final_inputs[layer_name].setdefault(in_type, 0)
-                    final_inputs[layer_name][in_type] += in_val
+            # Unificar la llamada de actualización
+            for layer_name, layer in col.layers.items():
+                inputs_for_layer = layer_inputs.get(layer_name, {})
+                if col.is_spike_based:
+                    layer.update(step_time, **inputs_for_layer)
+                else:
+                    layer.update(**inputs_for_layer)
 
-            col.update(final_inputs)
+        # Actualizar tasas promedio para reglas de covarianza
+        if self.plasticity_manager and self.plasticity_manager.rule_type == 'covariance':
+            alpha = self.dt / self.tau_avg_rate
+            for i, col in enumerate(self.columns):
+                for layer_name, layer in col.layers.items():
+                    key = (i, layer_name)
+                    current_rate = np.mean(layer.A)
 
-        # --- 3. Actualizar el estado de la red ---
-        for i, col in enumerate(self.columns):
-            self.network_state[f'col_{i}'] = col.get_state()
+                    if key not in self.avg_rates:
+                        self.avg_rates[key] = current_rate
+                    else:
+                        self.avg_rates[key] += alpha * (current_rate - self.avg_rates[key])
 
-    def record_weights(self):
-        """Le pide al ConnectionManager que guarde los pesos actuales."""
-        self.connection_manager.record_weights()
+        # Aplicar plasticidad
+        if self.plasticity_manager:
+            self.apply_plasticity(step_time)
 
-    def apply_plasticity(self, plasticity_rule_func):
-        """
-        Aplica una regla de plasticidad a todas las conexiones de la red.
+    def apply_plasticity(self, step_time):
+        """Aplica la regla de plasticidad configurada."""
+        if self.plasticity_manager.rule_type == 'stdp_multiplicative':
+            self._apply_stdp_multiplicative(step_time)
+        elif self.plasticity_manager.rule_type == 'covariance':
+            self._apply_covariance_rule()
 
-        Args:
-            plasticity_rule_func (function): Una función que toma (manager, pre_state, post_state, rule)
-                                             y devuelve el nuevo peso.
-        """
-        # Necesitamos el estado pre-sináptico (el actual) y el post-sináptico (el siguiente).
-        # Para simplificar, basaremos la plasticidad solo en el estado actual.
-
+    def _apply_covariance_rule(self):
+        """Aplica la regla de plasticidad de covarianza."""
         for rule in self.connection_manager.coupling_rules:
-            # Identificar neuronas pre y post sinápticas
-            # (Simplificación: usamos la actividad promedio de la capa)
-            post_col_idx = rule['target_col']
-            post_layer_name = rule['target_layer']
+            # Esta regla es para modelos de tasa
+            post_col_idx, post_layer_name = rule['target_col'], rule['target_layer']
+            post_layer = self.columns[post_col_idx].layers[post_layer_name]
 
-            # El estado post-sináptico es la actividad de la capa destino
-            post_activity = self.network_state[f'col_{post_col_idx}'][post_layer_name]
+            # La regla de covarianza puede tener múltiples fuentes
+            for source_col_idx, source_layer_name in rule['sources']:
+                pre_layer = self.columns[source_col_idx].layers[source_layer_name]
 
-            # El estado pre-sináptico es la actividad de las capas fuente
-            pre_activities = [self.network_state[f'col_{c}'][l] for c, l in rule['sources']]
+                pre_rate = np.mean(pre_layer.A)
+                post_rate = np.mean(post_layer.A)
+                pre_avg_rate = self.avg_rates.get((source_col_idx, source_layer_name), 0)
+                post_avg_rate = self.avg_rates.get((post_col_idx, post_layer_name), 0)
 
-            # Obtener el peso actual
-            source_col, source_layer = rule['sources'][0] # Simplificación para la firma
-            current_weight = self.connection_manager.get_weight(source_col, source_layer, post_col_idx, post_layer_name)
+                dw = self.plasticity_manager.calculate_dw(
+                    pre_rate=pre_rate, post_rate=post_rate,
+                    pre_avg_rate=pre_avg_rate, post_avg_rate=post_avg_rate
+                )
 
-            # Calcular el nuevo peso usando la regla
-            new_weight = plasticity_rule_func(current_weight, pre_activities, post_activity)
+                if dw != 0:
+                    current_weight = self.connection_manager.get_weight(source_col_idx, source_layer_name, post_col_idx, post_layer_name)
+                    new_weight = current_weight + dw
 
-            # Actualizar el peso en el ConnectionManager
-            self.connection_manager.update_weight(source_col, source_layer, post_col_idx, post_layer_name, new_weight)
+                    w_max = self.plasticity_manager.params.get('w_max', 1.0)
+                    w_min = self.plasticity_manager.params.get('w_min', 0.0)
+                    new_weight = np.clip(new_weight, w_min, w_max)
+
+                    self.connection_manager.update_weight(source_col_idx, source_layer_name, post_col_idx, post_layer_name, new_weight)
+
+    def _apply_stdp_multiplicative(self, step_time):
+        """Aplica STDP con cruce de dominio."""
+        for rule in self.connection_manager.coupling_rules:
+            post_col_idx, post_layer_name = rule['target_col'], rule['target_layer']
+            post_layer = self.columns[post_col_idx].layers[post_layer_name]
+
+            source_col_idx, source_layer_name = rule['sources'][0]
+            pre_layer = self.columns[source_col_idx].layers[source_layer_name]
+
+            # Solo aplicar si hay spikes en alguna de las dos capas para eficiencia
+            if not (np.any(pre_layer.spikes) or np.any(post_layer.spikes)):
+                continue
+
+            # Comparar cada neurona pre con cada neurona post (simplificación)
+            # Un modelo más detallado tendría una matriz de pesos por neurona.
+            # Aquí, el cambio de peso se promedia.
+
+            total_dw = 0.0
+            interaction_count = 0
+
+            for post_idx in np.where(post_layer.spikes)[0]:
+                t_post = post_layer.last_spike_time[post_idx]
+
+                # Para un t_post, buscar el t_pre más cercano
+                all_t_pre = pre_layer.last_spike_time
+                if np.all(all_t_pre < 0): continue # No hay spikes pre
+
+                # Encontrar el pre-spike más cercano en el tiempo
+                time_diffs = t_post - all_t_pre
+                closest_pre_idx = np.argmin(np.abs(time_diffs))
+                delta_t = time_diffs[closest_pre_idx]
+
+                if -40 < delta_t < 40 and delta_t != 0:
+                    current_weight = self.connection_manager.get_weight(source_col_idx, source_layer_name, post_col_idx, post_layer_name)
+                    dw = self.plasticity_manager.calculate_dw(w=current_weight, delta_t=delta_t)
+                    total_dw += dw
+                    interaction_count += 1
+
+            if interaction_count > 0:
+                avg_dw = total_dw / interaction_count
+                current_weight = self.connection_manager.get_weight(source_col_idx, source_layer_name, post_col_idx, post_layer_name)
+                new_weight = current_weight + avg_dw
+
+                w_max = self.plasticity_manager.params.get('w_max', 1.0)
+                w_min = self.plasticity_manager.params.get('w_min', -1.0)
+                new_weight = np.clip(new_weight, w_min, w_max)
+
+                self.connection_manager.update_weight(source_col_idx, source_layer_name, post_col_idx, post_layer_name, new_weight)

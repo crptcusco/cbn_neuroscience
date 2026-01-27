@@ -30,6 +30,18 @@ class RateNodeGroup(NeuronModel):
         x0 = self.gain_params.get('x0', 5.0)
         return 1 / (1 + np.exp(-beta * (x - x0)))
 
+    def _gerstner_gain_function(self, x):
+        """Función de ganancia teórica de Gerstner & Kistler (Eq. 5.55)."""
+        t_ref = self.gain_params.get('t_ref', 2.0)
+        tau = self.gain_params.get('gerstner_tau', 15.0)
+        I_th = self.gain_params.get('I_th', 1.5)
+
+        with np.errstate(divide='ignore', invalid='ignore'):
+            x_norm = x / I_th
+            arg = 1 - (1 / (tau * x_norm))
+            rate = np.where(arg > 0, 1.0 / (t_ref - tau * np.log(arg)), 0)
+        return rate * 1000 # Convertir a Hz
+
     def get_gain(self, x):
         if self.gain_function_type == 'sigmoid':
             return self._sigmoid_gain_function(x)
@@ -37,6 +49,8 @@ class RateNodeGroup(NeuronModel):
             return self._threshold_linear_gain_function(x)
         elif self.gain_function_type == 'step':
             return self._step_gain_function(x)
+        elif self.gain_function_type == 'gerstner':
+            return self._gerstner_gain_function(x)
         return x # Ganancia lineal por defecto
 
     def update(self, **inputs):

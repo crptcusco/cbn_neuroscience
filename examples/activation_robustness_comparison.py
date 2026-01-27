@@ -39,27 +39,33 @@ def run_and_analyze_network(gain_function_type, gain_params):
 
     # --- Construcción de la Red ---
     columns = [CompartmentalColumn(index=i, n_nodes_per_layer={'L4':1, 'L2/3':1, 'L5/6':1},
-                                   model_class=RateNodeGroup, model_params=rate_params, g_axial=2.0)
+                                   model_class=RateNodeGroup, model_params=rate_params)
                for i in range(N_COLUMNS)]
 
-    # --- Bucle de Simulación (simplificado, sin simulador de red por ahora) ---
+    # Definir reglas de acoplamiento en anillo
     coupling_strength = 6.0
-    ext_current = 4.0
+    rules = []
+    for i in range(N_COLUMNS):
+        prev_col_idx = (i - 1 + N_COLUMNS) % N_COLUMNS
+        rules.append({'sources': [(prev_col_idx, 'L5/6')], 'target_col': i,
+                      'target_layer': 'L2/3', 'weight': coupling_strength, 'type': 'additive'})
 
+    # Usar el simulador de red
+    from cbn_neuroscience.core.network_simulator import NetworkSimulator
+    simulator = NetworkSimulator(columns, rules)
+
+    # --- Bucle de Simulación ---
+    ext_current = 4.0
     history_A = {i: np.zeros(N_STEPS) for i in range(N_COLUMNS)}
 
-    for step in range(1, N_STEPS):
-        for i, col in enumerate(columns):
-            # Acoplamiento de la columna anterior en el anillo
-            prev_col_idx = (i - 1 + N_COLUMNS) % N_COLUMNS
-            inter_col_input = coupling_strength * columns[prev_col_idx].layers['L5/6'].A
+    for step in range(N_STEPS):
+        # El input externo solo a la primera columna para romper la simetría
+        ext_inputs = {0: {'L4': {'I_noise': ext_current}}}
 
-            # El input externo solo a la primera columna para romper la simetría
-            current_ext_input = ext_current if i == 0 else 0.0
+        simulator.run_step(step, ext_inputs)
 
-            col.update(ext_input=current_ext_input, inter_column_input=inter_col_input)
-
-            history_A[i][step] = col.layers['L5/6'].A[0]
+        for i in range(N_COLUMNS):
+            history_A[i][step] = columns[i].layers['L5/6'].A[0]
 
     # --- Análisis Espectral ---
     signal_A = history_A[0] # Analizar la primera columna

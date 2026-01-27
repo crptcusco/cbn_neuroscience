@@ -21,13 +21,12 @@ def test_and_gate_logic_with_simulator():
 
     def run_scenario(input_a, input_b):
         # Resetear el estado del simulador
-        simulator.network_state = {f'col_{i}': col.get_state() for i, col in enumerate(simulator.columns)}
         for layer in simulator.columns[0].layers.values(): layer.A.fill(0)
 
-        ext_inputs = {0: {'IN_A': {'I_total': input_a}, 'IN_B': {'I_total': input_b}}}
-        for _ in range(100):
-            simulator.run_step(ext_inputs)
-        return simulator.network_state['col_0']['OUT'][0]
+        ext_inputs = {0: {'IN_A': {'I_noise': input_a}, 'IN_B': {'I_noise': input_b}}}
+        for i in range(100):
+            simulator.run_step(i, ext_inputs)
+        return columns[0].layers['OUT'].A[0]
 
     assert run_scenario(0, 0) < 0.1
     assert run_scenario(1, 0) < 0.1
