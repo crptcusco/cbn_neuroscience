@@ -1,61 +1,46 @@
 # cbn_neuroscience/core/compartmental_column.py
 
 import numpy as np
-from cbn_neuroscience.core.lif_nodegroup import LIF_NodeGroup
+from cbn_neuroscience.core.neuron_model import NeuronModel
 
 class CompartmentalColumn:
     """
-    Columna cortical con modelo GLIF y sinapsis basadas en conductancia.
-    El acoplamiento se basa en spikes, no en corrientes directas.
+    Columna cortical genérica. Su única responsabilidad es mantener sus capas
+    y actualizarlas con los inputs pre-calculados por el simulador.
     """
-    def __init__(self, index: int, n_nodes_per_layer: dict, g_axial: float = 0.5, lif_params: dict = None, **kwargs):
+    def __init__(self, index: int, n_nodes_per_layer: dict, model_class: type[NeuronModel],
+                 model_params: dict):
         self.index = index
-        self.g_axial = g_axial
 
-        if lif_params is None:
-            lif_params = {}
+        self.layers = {name: model_class(n_nodes=n_nodes, **model_params)
+                       for name, n_nodes in n_nodes_per_layer.items()}
 
-        self.layers = {}
-        for name, n_nodes in n_nodes_per_layer.items():
-            self.layers[name] = LIF_NodeGroup(n_nodes=n_nodes, **lif_params)
+        self.is_spike_based = hasattr(next(iter(self.layers.values())), 'spikes')
+        if self.is_spike_based:
+            self.prev_spikes = {name: np.zeros(layer.n_nodes, dtype=bool) for name, layer in self.layers.items()}
 
-        self.output_layer_name = 'L5/6'
-
-        # Almacenar spikes del paso anterior para el acoplamiento
-        self.prev_spikes = {name: np.zeros(layer.n_nodes, dtype=bool) for name, layer in self.layers.items()}
-
-    def update(self, ext_spikes: np.ndarray, I_noise_total: np.ndarray, inter_column_spikes: np.ndarray):
+    def update(self, step_time, layer_inputs: dict):
         """
         Args:
-            ext_spikes (np.ndarray): Pesos de spikes de estímulo externo a L4.
-            I_noise_total (np.ndarray): Ruido de corriente para todas las capas.
-            inter_column_spikes (np.ndarray): Pesos de spikes de otras columnas a L2/3.
+            step_time (float): Tiempo actual de la simulación.
+            layer_inputs (dict): Inputs pre-calculados para cada capa.
         """
-        # --- 1. Calcular los spikes de acoplamiento axial del paso ANTERIOR ---
-        # El acoplamiento es un incremento de conductancia proporcional a g_axial
-        # si la capa presináptica disparó en el paso anterior.
+        # Primero, guardar los spikes actuales para el cálculo del siguiente paso
+        if self.is_spike_based:
+            for name, layer in self.layers.items():
+                self.prev_spikes[name] = layer.spikes.copy()
 
-        # Asumimos conectividad total entre capas para simplificar (se promedia el efecto)
-        spikes_4_to_23 = self.g_axial * np.mean(self.prev_spikes['L4'])
-        spikes_23_to_56 = self.g_axial * np.mean(self.prev_spikes['L2/3'])
-        spikes_23_to_4 = self.g_axial * np.mean(self.prev_spikes['L2/3'])
-        spikes_56_to_23 = self.g_axial * np.mean(self.prev_spikes['L5/6'])
-
-        # --- 2. Preparar los inputs (spikes pesados) para cada capa ---
-        weighted_spikes = {name: np.zeros(layer.n_nodes) for name, layer in self.layers.items()}
-
-        weighted_spikes['L4'] += ext_spikes + spikes_23_to_4
-        weighted_spikes['L2/3'] += inter_column_spikes + spikes_4_to_23 + spikes_56_to_23
-        weighted_spikes['L5/6'] += spikes_23_to_56
-
-        # --- 3. Actualizar la dinámica GLIF para cada capa ---
-        offset = 0
+        # Luego, actualizar cada capa con sus inputs
         for name, layer in self.layers.items():
-            end = offset + layer.n_nodes
-            noise_term = I_noise_total[offset:end]
-            layer.update(weighted_spikes[name], noise_term)
-            offset = end
+            inputs_for_layer = layer_inputs.get(name, {})
+            if self.is_spike_based:
+                layer.update(step_time, **inputs_for_layer)
+            else:
+                layer.update(**inputs_for_layer)
 
-        # --- 4. Guardar los spikes actuales para el siguiente paso ---
-        for name, layer in self.layers.items():
-            self.prev_spikes[name] = layer.spikes.copy()
+    def get_state(self):
+        """Devuelve el estado relevante (spikes o actividad) de cada capa."""
+        if self.is_spike_based:
+            return {name: layer.spikes for name, layer in self.layers.items()}
+        else: # Rate-based
+            return {name: layer.A for name, layer in self.layers.items()}
