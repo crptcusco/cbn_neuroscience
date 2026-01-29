@@ -1,7 +1,8 @@
 # cbn_neuroscience/core/srm_nodegroup.py
 import numpy as np
+from cbn_neuroscience.core.neuron_model import NeuronModel
 
-class SRM_NodeGroup:
+class SRM_NodeGroup(NeuronModel):
     """
     Representa un grupo de neuronas usando el Spike-Response Model (SRM).
     La dinámica se basa en la suma de kernels, como se describe en el
